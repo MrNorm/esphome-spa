@@ -1,0 +1,244 @@
+esphome:
+  name: draytona_hottub
+  platform: esp8266
+  board: nodemcu
+
+logger:
+  level: INFO
+  
+mqtt:
+  broker: home.oli.me
+  username: hottub
+  password: !secret device_password
+  port: 7883
+
+ota:
+  password: !secret device_password
+
+wifi:
+  ssid: "SKYZDCCJ"
+  password: !secret wifi_password
+  power_save_mode: none
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Hot Tub Fallback Hotspot"
+    password: !secret device_password
+
+captive_portal:
+
+
+dallas:
+  - pin: GPIO2 #D4 + 10k between positive and signal
+    update_interval: 10s
+
+sensor:
+  - platform: dallas
+    id: draytona_temp_water
+    address: 0x83000000178f1428
+    name: "Draytona - Water Temperature"
+    on_value_range:
+        - below: 45
+          then:
+            - binary_sensor.template.publish:
+                id: draytona_water_alarm
+                state: OFF
+        - above: 45
+          then:
+              - switch.turn_on: draytona_pump_water
+              - switch.turn_off: draytona_ozone
+              - switch.turn_on: draytona_pump_jet_1
+              - switch.turn_on: draytona_pump_jet_2
+              - switch.turn_on: draytona_blower
+              - climate.control:
+                  id: draytona_water_temperature
+                  mode: "OFF"
+              - binary_sensor.template.publish:
+                  id: draytona_water_alarm
+                  state: ON
+  - platform: dallas
+    id: draytona_temp_heater
+    address: 0x83000000178f1428 # todo get id
+    name: "Draytona - Heater Temperature"
+    on_value_range:
+      - below: 80
+        then:
+          - binary_sensor.template.publish:
+              id: draytona_heater_alarm
+              state: OFF
+      - above: 80
+        then:
+            - switch.turn_on: draytona_pump_water
+            - switch.turn_off: draytona_ozone
+            - switch.turn_on: draytona_pump_jet_1
+            - switch.turn_on: draytona_pump_jet_2
+            - switch.turn_on: draytona_blower
+            - binary_sensor.template.publish:
+                id: draytona_heater_alarm
+                state: ON
+            - climate.control:
+                id: draytona_water_temperature
+                mode: "OFF"
+  - platform: wifi_signal
+    name: "Draytona - WiFi Signal"
+    update_interval: 30s
+    id: draytona_signal
+  - platform: wifi_signal
+    name: "Draytona - WiFi Signal Sensor"
+    update_interval: 60s
+
+switch:
+  - platform: gpio
+    pin: GPIO12 #D6
+    name: "Draytona - Water Pump"
+    id: draytona_pump_water
+    restore_mode: ALWAYS_OFF
+    inverted: true
+    on_turn_off:
+      - climate.control:
+          id: draytona_water_temperature
+          mode: "OFF"
+  - platform: gpio
+    pin: GPIO14 #D5
+    name: "Draytona - Jet Pump 1"
+    id: draytona_pump_jet_1
+    restore_mode: ALWAYS_OFF
+    inverted: true
+  - platform: gpio
+    pin: GPIO16 #D0
+    name: "Draytona - Jet Pump 2"
+    id: draytona_pump_jet_2
+    restore_mode: ALWAYS_OFF
+    inverted: true
+  - platform: gpio
+    pin: GPIO4 #D2
+    name: "Draytona - Heating Element"
+    id: draytona_heating_element
+    restore_mode: ALWAYS_OFF
+    inverted: true
+  - platform: gpio
+    pin: GPIO13 #D7
+    name: "Draytona - Lights"
+    id: draytona_lights
+    inverted: true
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    pin: GPIO14 #TODO FIND ONE
+    name: "Draytona - Blower"
+    id: draytona_blower
+    inverted: true
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    pin: GPIO15 #TODO FIND ONE
+    name: "Draytona - OZone"
+    id: draytona_ozone
+    inverted: true
+    restore_mode: ALWAYS_OFF
+climate:
+  - platform: thermostat
+    name: "Draytona - Water Temperature"
+    id: draytona_water_temperature
+    sensor: draytona_temp_water
+    preset:
+      - name: "Eco"
+        default_target_temperature_low: 20 °C
+      - name: "Normal"
+        default_target_temperature_low: 38 °C
+    min_heating_off_time: 30s
+    min_heating_run_time: 30s
+    visual:
+        max_temperature: 40 °C
+        min_temperature: 20 °C
+    min_idle_time: 30s
+    heat_action:
+      - switch.turn_on: draytona_heating_element
+      - switch.turn_on: draytona_pump_water
+    idle_action:
+      - switch.turn_off: draytona_heating_element
+
+binary_sensor:
+  - platform: gpio
+    pin: D2 # TODO find one
+    name: "Draytona - Flow Safety Alarm"
+    id: draytona_flow_alarm
+    device_class: problem
+    on_state: 
+      then:
+        - switch.turn_off: draytona_pump_jet_1
+        - switch.turn_off: draytona_pump_jet_2
+        - switch.turn_off: draytona_blower
+        - switch.turn_off: draytona_ozone
+        - switch.turn_on: draytona_pump_water
+        - climate.control:
+            id: draytona_water_temperature
+            mode: "OFF"
+  - platform: template
+    id: draytona_heater_alarm
+    device_class: problem
+    name: "Draytona - Heater Safety Alarm"
+  - platform: template
+    id: draytona_water_alarm
+    device_class: problem
+    name: "Draytona - Water Safety Alarm"
+  - platform: template
+    id: draytona_cleaning_cycle
+    device_class: running
+select:
+  - platform: template
+    name: "Cleaning Cycle Duration (Hours)"
+    optimistic: true
+    id: draytona_cycle_duration
+    restore_value: true
+    options:
+      - 2h
+      - 4h
+      - 6h
+    initial_option: 2h
+
+interval:
+  - interval: 12h
+    then:
+      if:
+        condition:
+          switch.is_off: draytona_pump_water
+        then:
+          - switch.turn_on: draytona_pump_water
+          - switch.turn_on: draytona_ozone
+          - binary_sensor.template.publish:
+              id: draytona_cleaning_cycle
+              state: ON
+  - interval: 15min
+    then:
+      - if:
+          condition:
+            and:
+              - lambda: 'return strcmp(id(draytona_cycle_duration).state.c_str(), "2h");'
+              - for:
+                  time: 2h
+                  condition:
+                    binary_sensor.is_on: draytona_cleaning_cycle
+          then:
+            - switch.turn_off: draytona_pump_water
+            - switch.turn_off: draytona_ozone
+      - if:
+          condition:
+            and:
+              - lambda: 'return strcmp(id(draytona_cycle_duration).state.c_str(), "4h");'
+              - for:
+                  time: 4h
+                  condition:
+                    binary_sensor.is_on: draytona_cleaning_cycle
+          then:
+            - switch.turn_off: draytona_pump_water
+            - switch.turn_off: draytona_ozone
+      - if:
+          condition:
+            and:
+              - lambda: 'return strcmp(id(draytona_cycle_duration).state.c_str(), "6h");'
+              - for:
+                  time: 6h
+                  condition:
+                    binary_sensor.is_on: draytona_cleaning_cycle
+          then:
+            - switch.turn_off: draytona_pump_water
+            - switch.turn_off: draytona_ozone
+
